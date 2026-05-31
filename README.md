@@ -18,7 +18,7 @@
 8. [Phase 8: UsersService — The Data Owner](#phase-8-usersservice--the-data-owner)
 9. [Phase 9: UsersController — Routes](#phase-9-userscontroller--routes)
 10. [Phase 10: Auth Module + JWT Authentication](#phase-10-auth-module--jwt-authentication)
-11. [Phase 11: Middleware Application](#phase-11-middleware-application)
+11. [Phase 11: Route-wise AuthGuard Application](#phase-11-route-wise-authguard-application)
 12. [Phase 12: Profile Moved to Users Module](#phase-12-profile-moved-to-users-module)
 13. [Phase 13: Build & Verify](#phase-13-build--verify)
 14. [Phase 14: Architecture & File Map Reference](#phase-14-architecture--file-map-reference)
@@ -750,7 +750,6 @@ mkdir src/users/dto
 ```
 src/users/dto/
 ├── create-user.dto.ts
-├── update-user.dto.ts
 └── index.ts    ← Barrel export
 ```
 
@@ -805,33 +804,7 @@ if (!fname || typeof fname !== 'string') return res.status(400).json({ error: 'I
 
 ---
 
-### Step 7.3 — UpdateUserDto
-
-**File:** `src/users/dto/update-user.dto.ts`
-
-```ts
-import { PartialType } from '@nestjs/mapped-types'
-import { CreateUserDto } from './create-user.dto'
-
-export class UpdateUserDto extends PartialType(CreateUserDto) {}
-```
-
-**Wait — `@nestjs/mapped-types` install karna hoga:**
-```bash
-npm install @nestjs/mapped-types
-```
-
-**Kyun?**  
-Update mein sab fields optional hote hain. Sirf wahi do jo change karne hain. `PartialType(CreateUserDto)` — CreateUserDto ke sab fields ko optional bana deta hai (`fname?`, `lname?`, etc.)
-
-**Express mein:** Har field check karni padti:
-```js
-if (req.body.fname !== undefined) payload.fname = req.body.fname
-```
-
----
-
-### Step 7.4 — Auth DTOs (independent classes)
+### Step 7.3 — Auth DTOs (independent classes)
 
 **File:** `src/auth/dto/register.dto.ts`
 
@@ -1020,76 +993,7 @@ if (rows.length === 0) return res.status(404).json({ error: 'Not found' })
 
 ---
 
-### Step 8.6 — update() method
-
-```ts
-async update(id: number, dto: UpdateUserDto) {
-  try {
-    const payload: Partial<typeof users.$inferInsert> = {}
-
-    if (dto.fname !== undefined) payload.fname = dto.fname
-    if (dto.lname !== undefined) payload.lname = dto.lname
-    if (dto.email !== undefined) payload.email = dto.email
-
-    if (Object.keys(payload).length === 0) {
-      return this.findOne(id)
-    }
-
-    const [updated] = await this.database.db
-      .update(users)
-      .set({ ...payload, updatedAt: new Date() })
-      .where(eq(users.id, id))
-      .returning()
-
-    if (!updated) {
-      throw new NotFoundException(`User with id ${id} not found`)
-    }
-
-    return updated
-  } catch (error: unknown) {
-    if (error instanceof NotFoundException) {
-      throw error
-    }
-    throw new InternalServerErrorException('Failed to update user')
-  }
-}
-```
-
-**Kyun?**  
-PATCH — sirf wahi fields update karo jo actually di gayi hain. Dynamic payload: agar `dto.fname !== undefined` → payload mein daalo. Kuch nahi diya → user wapas return karo.
-
----
-
-### Step 8.7 — remove() method
-
-```ts
-async remove(id: number) {
-  try {
-    const [deleted] = await this.database.db
-      .delete(users)
-      .where(eq(users.id, id))
-      .returning({ id: users.id })
-
-    if (!deleted) {
-      throw new NotFoundException(`User with id ${id} not found`)
-    }
-
-    return { deleted: true, id: deleted.id }
-  } catch (error: unknown) {
-    if (error instanceof NotFoundException) {
-      throw error
-    }
-    throw new InternalServerErrorException('Failed to delete user')
-  }
-}
-```
-
-**Kyun?**  
-`DELETE FROM users WHERE id = $1 RETURNING id`. Deleted record ka id return karo.
-
----
-
-### Step 8.8 — profile() method
+### Step 8.6 — profile() method
 
 ```ts
 async profile(userId: number) {
@@ -1124,64 +1028,35 @@ nest g co users --no-spec
 
 ---
 
-### Step 9.2 — Add CRUD endpoints
+### Step 9.2 — Only profile endpoint (route-wise)
 
 ```ts
-import {
-  Body, Controller, Delete, Get, Param, Patch, Post, Req, ParseIntPipe,
-} from '@nestjs/common'
+import { Controller, Get, Req, UseGuards } from '@nestjs/common'
 import type { Request } from 'express'
-import { CreateUserDto } from './dto/create-user.dto'
-import { UpdateUserDto } from './dto/update-user.dto'
+import { AuthGuard } from '../auth/auth.guard'
 import { UsersService } from './users.service'
 
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Post()
-  create(@Body() dto: CreateUserDto) {
-    return this.usersService.create(dto)
-  }
-
   @Get('profile')
+  @UseGuards(AuthGuard)
   profile(@Req() req: Request) {
     return this.usersService.profile(req.user!.id)
-  }
-
-  @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.usersService.findOne(id)
-  }
-
-  @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(id, dto)
-  }
-
-  @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.usersService.remove(id)
   }
 }
 ```
 
-**Kyun?**  
-- `@Body() dto: CreateUserDto` — ValidationPipe auto validate karega
-- `@Param('id', ParseIntPipe) id: number` — ParseIntPipe string "5" ko number 5 mein convert karega
-- `@Controller('users')` — Saare routes `/users` se prefix ho gaye
+**Kyun sirf profile?**  
+- UsersController ka kaam sirf logged-in user ko apna data dikhana hai
+- Registration/login ka kaam AuthController karega
+- `@UseGuards(AuthGuard)` — NestJS Guard hai. Sirf is ek route pe laga hai. Baaki routes open rahenge
 
----
-
-### Step 9.3 — Profile before :id — IMPORTANT Order
-
-`@Get('profile')` **must be before** `@Get(':id')` kyunki NestJS routes ko sequentially match karta hai. `:id` wildcard hai — koi bhi string match karega. Agar `profile` pehle nahi likha to `GET /users/profile` call karo → NestJS sochega "profile" = `id` → `findOne('profile')` → ParseIntPipe fail → 400 error.
-
-**Express mein same:**
-```js
-router.get('/profile', handler)  // Pehle
-router.get('/:id', handler)      // Baad mein
-```
+**`@UseGuards(AuthGuard)` kyun, middleware nahi?**  
+- Middleware = Global level (AppModule mein apply hota hai, saare routes pe jaata hai)
+- Guard = Route level (sirf us route pe laga hai jahan `@UseGuards()` likha ho)
+- **Rule of thumb:** Agar sirf kuch specific routes protect karne hain → Guard use karo. Agar saare routes protect karne hain → Middleware use karo.
 
 ---
 
@@ -1250,7 +1125,7 @@ TypeScript type safety. JWT decode kiya → `{ id: number }` milna chahiye. Inte
 mkdir src/auth/dto
 ```
 
-Files: `register.dto.ts`, `login.dto.ts`, `index.ts` — already Phase 7.4 mein bana diye.
+Files: `register.dto.ts`, `login.dto.ts`, `index.ts` — already Phase 7.3 mein bana diye.
 
 ---
 
@@ -1263,6 +1138,7 @@ import { Module } from '@nestjs/common'
 import { JwtModule } from '@nestjs/jwt'
 import { AuthController } from './auth.controller'
 import { AuthService } from './auth.service'
+import { AuthGuard } from './auth.guard'
 import { UsersModule } from '../users/users.module'
 
 @Module({
@@ -1274,34 +1150,37 @@ import { UsersModule } from '../users/users.module'
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService],
+  providers: [AuthService, AuthGuard],
+  exports: [AuthGuard],
 })
 export class AuthModule {}
 ```
 
 **`global: true` kyun?**  
-Middleware mein `jwtService.verify()` use karenge. Middleware AppModule mein apply hota hai. Global na ho to auth.module import karna padega AppModule mein.
+`AuthGuard` ya koi bhi service `JwtService` ko inject kar sake bina import kiye. Agar global na ho to har module mein `JwtModule` import karna padega.
 
 **Kya hoga?**  
 Kahi bhi `jwtService` inject kar sakte ho.
 
 ---
 
-### Step 10.6 — Create Auth Middleware
+### Step 10.6 — Create AuthGuard (instead of Middleware)
 
-**File:** `src/auth/auth.middleware.ts`
+**File:** `src/auth/auth.guard.ts`
 
 ```ts
-import { Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common'
+import {
+  Injectable, CanActivate, ExecutionContext, UnauthorizedException,
+} from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
-import { Request, Response, NextFunction } from 'express'
-import { JwtPayload } from './jwt-payload.interface'
+import { Request } from 'express'
 
 @Injectable()
-export class AuthMiddleware implements NestMiddleware {
+export class AuthGuard implements CanActivate {
   constructor(private readonly jwtService: JwtService) {}
 
-  use(req: Request, _res: Response, next: NextFunction) {
+  canActivate(context: ExecutionContext): boolean {
+    const req = context.switchToHttp().getRequest<Request>()
     const authHeader = req.headers.authorization
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -1311,9 +1190,9 @@ export class AuthMiddleware implements NestMiddleware {
     const token = authHeader.split(' ')[1]
 
     try {
-      const decoded = this.jwtService.verify<JwtPayload>(token)
+      const decoded = this.jwtService.verify<{ id: number }>(token)
       req.user = decoded
-      next()
+      return true
     } catch {
       throw new UnauthorizedException('Invalid or expired token')
     }
@@ -1321,39 +1200,46 @@ export class AuthMiddleware implements NestMiddleware {
 }
 ```
 
-**Kyun?**  
-Client bhejta hai: `Authorization: Bearer eyJhbG...`  
-Middleware: Token extract karo → verify karo → `req.user` set karo → controller pe jao
+**Guard vs Middleware — kya fark hai?**
+
+| Feature | Middleware | Guard |
+|---------|-----------|-------|
+| **Level** | App-wide (`.forRoutes()`) | Route-specific (`@UseGuards()`) |
+| **Kaise lagta hai** | `AppModule.configure()` mein | Controller ke route handler par decorator se |
+| **Kis route pe lagega?** | Saare ya exclude wale | Sirf jahan `@UseGuards()` likha |
+| **Use case** | Sab jagah auth chahiye (admin panel) | Sirf kuch specific routes protected |
 
 **Express analogy:**
 ```js
-app.use((req, res, next) => {
-  const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Token is required' })
-  }
-  const token = authHeader.split(' ')[1]
-  req.user = jwt.verify(token, SECRET)
-  next()
-})
+// Middleware (sab routes pe)
+app.use(authMiddleware)
+
+// Guard jaisa (specific route pe)
+router.get('/profile', authMiddleware, handler)
 ```
+
+**Kyun Guard use kiya middleware ki jagah?**  
+Hume sirf `GET /users/profile` ko protect karna hai. Middleware global hota hai — exclude karte karte complexity badhti hai. Guard route-specific hai — jahan lagao wahi kaam karta hai.
+
+**`req.user` ka type?**  
+`auth.guard.ts` mein `jwtService.verify<{ id: number }>(token)` — decoded token ka type. `src/types/express-augment.ts` mein Express.Request mein `user` property add ki gayi hai taaki TypeScript error na de.
 
 ---
 
 ### Step 10.7 — Express Type Augmentation
 
-**File:** `src/@types/express.d.ts`
+**File:** `src/types/express-augment.ts`
 
 ```ts
-import { JwtPayload } from '../auth/jwt-payload.interface'
-
 declare global {
   namespace Express {
     interface Request {
-      user?: JwtPayload
+      user?: { id: number }
     }
   }
 }
+
+export {}
 ```
 
 **Kyun?**  
@@ -1483,30 +1369,70 @@ app.post('/auth/login', async (req, res) => {
 
 ---
 
-## Phase 11: Middleware Application
+## Phase 11: Route-wise AuthGuard Application
 
-> **Goal:** Saare protected routes pe middleware lage, sirf register/login exempt
+> **Goal:** Sirf `GET /users/profile` route protected ho — baaki sab open. Guard lagao, middleware nahi.
 
 ---
 
-### Step 11.1 — Update app.module.ts
+### Step 11.1 — Apply AuthGuard on specific route
 
-**File:** `src/app.module.ts`
+Global middleware ki jagah hum **route-specific Guard** use karte hain.
+
+**File:** `src/users/users.controller.ts`
 
 ```ts
-import { Module, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/common'
+import { Controller, Get, Req, UseGuards } from '@nestjs/common'
+import type { Request } from 'express'
+import { AuthGuard } from '../auth/auth.guard'
+import { UsersService } from './users.service'
+
+@Controller('users')
+export class UsersController {
+  constructor(private readonly usersService: UsersService) {}
+
+  @Get('profile')
+  @UseGuards(AuthGuard)        // ✅ Sirf yeh route protected
+  profile(@Req() req: Request) {
+    return this.usersService.profile(req.user!.id)
+  }
+}
+```
+
+**`@UseGuards(AuthGuard)` kaise kaam karta hai?**  
+- Guard ek class hai jo `CanActivate` interface implement karta hai
+- `canActivate()` → `true` return kiya to request proceed, `false` / exception throw → 401
+- `@UseGuards()` decorator route handler ke upar laga → sirf us route ke liye guard active
+
+**Kyun middleware nahi?**  
+- Middleware `AppModule` mein `configure()` se global apply hota hai
+- Middleware ko exclude karna padta hai (register, login)
+- Middleware bhoolna aasan hai — Guard explicit hai (decorator route ke saath)
+- **Rule:** 1-2 routes protect karne hain → Guard. Sab routes protect karne hain → Middleware.
+
+**Express analogy:**
+```js
+// Guard approach (route-specific)
+router.get('/profile', authMiddleware, handler)
+// Sirf /profile pe authMiddlerware laga, /users/:id pe nahi
+```
+
+**Kya hoga?**  
+`app.module.ts` ab simple hai — koi middleware nahi, koi `configure()` nahi:
+
+```ts
+import { Module } from '@nestjs/common'
 import { APP_FILTER } from '@nestjs/core'
 import { ConfigModule } from '@nestjs/config'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
 import { AuthModule } from './auth/auth.module'
-import { AuthMiddleware } from './auth/auth.middleware'
 import { DatabaseModule } from './db/database.module'
 import { UsersModule } from './users/users.module'
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter'
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), DatabaseModule, UsersModule, AuthModule],
+  imports: [ConfigModule.forRoot(), DatabaseModule, UsersModule, AuthModule],
   controllers: [AppController],
   providers: [
     AppService,
@@ -1516,37 +1442,7 @@ import { GlobalExceptionFilter } from './common/filters/global-exception.filter'
     },
   ],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer
-      .apply(AuthMiddleware)
-      .exclude(
-        { path: 'auth/register', method: RequestMethod.POST },
-        { path: 'auth/login', method: RequestMethod.POST },
-      )
-      .forRoutes('*')
-  }
-}
-```
-
-**Kyun?**  
-- `NestModule` implement karna padta hai middleware use karne ke liye.
-- `.apply(AuthMiddleware)` — Kaunsa middleware? AuthMiddleware.
-- `.exclude(...)` — Kin routes ko bypass karna hai? Sirf POST register aur POST login.
-- `.forRoutes('*')` — Baaki saare routes protected.
-
-**Why specific exclude not `auth/(.*)`?**  
-Pehle `auth/(.*)` tha — saare auth routes bypass. Problem: `GET /auth/profile` (jo Auth module mein tha) bhi bypass ho jata. Ab profile Users module mein hai, lekin specific exclude best practice hai.
-
-**Express analogy:**
-```js
-app.use((req, res, next) => {
-  if (req.method === 'POST' && (req.path === '/auth/register' || req.path === '/auth/login')) {
-    return next()
-  }
-  // verify token...
-  next()
-})
+export class AppModule {}
 ```
 
 ---
@@ -1555,13 +1451,10 @@ app.use((req, res, next) => {
 
 | Route | Protected? | Reason |
 |---|---|---|
-| `POST /auth/register` | ❌ No | Explicitly excluded |
-| `POST /auth/login` | ❌ No | Explicitly excluded |
-| `GET /users/profile` | ✅ Yes | Middleware applies |
-| `GET /users/1` | ✅ Yes | Middleware applies |
-| `PATCH /users/1` | ✅ Yes | Middleware applies |
-| `DELETE /users/1` | ✅ Yes | Middleware applies |
-| `GET /` (Hello World) | ✅ Yes | Middleware applies |
+| `POST /auth/register` | ❌ No | AuthController — no Guard |
+| `POST /auth/login` | ❌ No | AuthController — no Guard |
+| `GET /users/profile` | ✅ Yes | `@UseGuards(AuthGuard)` on controller method |
+| `GET /` (Hello World) | ❌ No | AppController — no Guard |
 
 ---
 
@@ -1573,8 +1466,8 @@ app.use((req, res, next) => {
 
 ### Step 12.1 — Already done
 
-- `@Get('profile')` in UsersController ✅ (Phase 9.2)
-- `profile()` in UsersService ✅ (Phase 8.8)
+- `@Get('profile')` in UsersController with `@UseGuards(AuthGuard)` ✅ (Phase 9.2)
+- `profile()` in UsersService ✅ (Phase 8.6)
 
 ### Step 12.2 — Cleanup Auth Module
 
@@ -1590,12 +1483,11 @@ AuthModule                    UsersModule
 register()  ──delegates──▶    create()
 login()     ──delegates──▶    findByEmail() + validatePassword()
                                findOne() + profile()
-                               update() + remove()
 ```
 
 **Benefits:**
 - AuthModule: Only authentication (register + login + JWT)
-- UsersModule: User data management (CRUD + profile)
+- UsersModule: Only profile (logged-in user ka apna data)
 - **SRP** — ek module ek kaam
 
 ---
@@ -1721,33 +1613,7 @@ curl http://localhost:3001/users/profile \
 
 ---
 
-**4. Get user by ID**
-```bash
-curl http://localhost:3001/users/1 \
-  -H "Authorization: Bearer <token>"
-```
-
----
-
-**5. Update user**
-```bash
-curl -X PATCH http://localhost:3001/users/1 \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{"fname":"Rahul Kumar"}'
-```
-
----
-
-**6. Delete user**
-```bash
-curl -X DELETE http://localhost:3001/users/1 \
-  -H "Authorization: Bearer <token>"
-```
-
----
-
-**7. Validation test (error case)**
+**4. Validation test (error case)**
 ```bash
 curl -X POST http://localhost:3001/auth/register \
   -H "Content-Type: application/json" \
@@ -1779,30 +1645,31 @@ my_first_project/
 ├── src/                           # Saara code yahan
 │   │
 │   ├── main.ts                    # ⭐ Entry — ValidationPipe + server start
-│   ├── app.module.ts              # ⭐ Root — middleware + global filter
+│   ├── app.module.ts              # ⭐ Root — module imports, global filter
 │   ├── app.controller.ts          # Hello World (GET /)
 │   ├── app.service.ts             # Hello World logic
+│   │
+│   ├── types/                     # 📝 Type augmentations
+│   │   └── express-augment.ts     #   req.user type definition
 │   │
 │   ├── db/                        # 🗄️ Database (GLOBAL)
 │   │   ├── database.module.ts     #   @Global()
 │   │   ├── database.service.ts    #   Pool + Drizzle + auto-create DB
 │   │   └── schema.ts              #   Barrel re-export
 │   │
-│   ├── users/                     # 👤 Users module (DATA OWNER)
+│   ├── users/                     # 👤 Users module
 │   │   ├── users.module.ts        #   exports UsersService
-│   │   ├── users.controller.ts    #   POST /users, GET /users/profile, GET/PATCH/DELETE /:id
-│   │   ├── users.service.ts       #   CRUD + profile + auth helpers
+│   │   ├── users.controller.ts    #   GET /users/profile (protected by AuthGuard)
+│   │   ├── users.service.ts       #   create, findByEmail, validatePassword, findOne, profile
 │   │   ├── schema.ts              #   Users table definition
 │   │   └── dto/
-│   │       ├── create-user.dto.ts #   @IsEmail @IsString @IsNotEmpty @IsEnum
-│   │       ├── update-user.dto.ts #   PartialType — sab optional
-│   │       └── index.ts           #   Barrel export
+│   │       └── create-user.dto.ts #   @IsEmail @IsString @IsNotEmpty @IsEnum
 │   │
-│   ├── auth/                      # 🔐 Auth module (DELEGATOR)
+│   ├── auth/                      # 🔐 Auth module
 │   │   ├── auth.module.ts         #   JwtModule global + imports UsersModule
 │   │   ├── auth.controller.ts     #   POST /auth/register, POST /auth/login
 │   │   ├── auth.service.ts        #   register + login (delegates to UsersService)
-│   │   ├── auth.middleware.ts     #   JWT verify — Bearer token check
+│   │   ├── auth.guard.ts          #   JWT verify — Bearer token check (route-specific!)
 │   │   ├── jwt-payload.interface.ts  # { id: number }
 │   │   └── dto/
 │   │       ├── register.dto.ts    #   Registration fields (independent!)
@@ -1812,9 +1679,6 @@ my_first_project/
 │   ├── common/                    # 🛠️ Shared utilities
 │   │   └── filters/
 │   │       └── global-exception.filter.ts  # Global error handler
-│   │
-│   └── @types/
-│       └── express.d.ts           # req.user type augmentation
 │
 ├── drizzle.config.ts              # Drizzle kit config
 ├── nest-cli.json                  # NestJS CLI config
@@ -1833,7 +1697,7 @@ my_first_project/
 ```
 AppModule
    │
-   ├── ConfigModule.forRoot({ isGlobal: true })
+   ├── ConfigModule.forRoot()
    │     └── .env file load → process.env
    │
    ├── DatabaseModule (@Global)
@@ -1841,7 +1705,8 @@ AppModule
    │           ↑ Injected into UsersService
    │
    ├── UsersModule
-   │     ├── UsersController (routes)
+   │     ├── UsersController (route: GET /users/profile)
+   │     │     └── @UseGuards(AuthGuard) → route-specific protection
    │     ├── UsersService (business logic)
    │     │     └── uses DatabaseService
    │     └── exports: [UsersService]
@@ -1852,8 +1717,8 @@ AppModule
    │     ├── UsersModule (imported for UsersService)
    │     ├── AuthController (register + login routes)
    │     ├── AuthService (uses UsersService + JwtService)
-   │     └── AuthMiddleware (uses JwtService)
-   │           ↑ Applied in AppModule.configure()
+   │     └── AuthGuard (uses JwtService)
+   │           ↑ Used via @UseGuards() on UsersController.profile()
    │
    └── GlobalExceptionFilter (via APP_FILTER provider)
 ```
@@ -1867,11 +1732,11 @@ GET /users/profile
 Authorization: Bearer eyJhbG...
   │
   ▼
-[AuthMiddleware]
+[AuthGuard.canActivate()]  ← @UseGuards(AuthGuard) ne trigger kiya
   ├── Header se "Bearer eyJhbG..." extract
   ├── jwtService.verify(token) → { id: 1, iat: 1748640000 }
   ├── req.user = { id: 1 }
-  └── next() → controller ko gya
+  └── return true → controller ko request chali gayi
   │
   ▼
 [UsersController.profile(@Req() req)]
@@ -1897,8 +1762,6 @@ Response: 200 OK
 ```
 POST /auth/register
 { "fname":"Rahul", "lname":"Sharma", "email":"rahul@test.com", "password":"secret123", "role":"student" }
-  │
-  ├─ [AuthMiddleware] → Excluded (POST /auth/register) → Skip
   │
   ├─ [ValidationPipe] → @IsEmail() ✓ @IsString() ✓ @IsNotEmpty() ✓ @IsEnum() ✓
   │                     → Extra fields? whitelist remove → OK
@@ -1936,10 +1799,9 @@ POST /auth/register
 | `ValidationPipe` with whitelist + forbidNonWhitelisted | Extra fields (isAdmin) auto reject — security |
 | Two DTOs (RegisterDto vs CreateUserDto) | RegisterDto future mein badh sakta hai (phone, referralCode) |
 | AuthService delegates to UsersService | DB access ka single source of truth — DRY |
-| Specific middleware exclusion (not `auth/(.*)`) | Sirf do POST routes exempt — baaki sab protected |
-| `profile` before `:id` in UsersController | Route ordering — NestJS sequentially match karta hai |
+| Route-wise AuthGuard (`@UseGuards`) instead of global middleware | Sirf wahi routes protect jo actually chahiye — baaki open |
 | No JWT expiry | User specifically asked |
-| `global: true` on JwtModule | Middleware in AppModule can inject JwtService without re-import |
+| `global: true` on JwtModule | AuthGuard kahi bhi JwtService inject kar sake |
 | Password destructuring | Security — user password DB ke bahar kabhi nahi aana chahiye |
 | `try-catch (error: unknown)` in every service method | Har method individually errors handle kare — Global filter just backup |
 
@@ -2084,40 +1946,19 @@ Check:
 
 ---
 
-### Issue 5: "User with id NaN not found"
+### Issue 5: AuthGuard throws "Cannot read properties of undefined"
 
 **Problem:**  
-Route hit kiya to `NaN` aa raha hai id mein.
+`req.user!.id` par error aa raha hai.
 
 **Reason:**  
-`@Get(':id')` mein `ParseIntPipe` nahi lagaya. Ek string "1" aa rahi hai lekin parseInt nahi ho raha. Ya `@Get(':id')` ke saath `@Get('profile')` order galat hai.
-
-**Fix:**
-```ts
-@Get('profile')  // Pehle
-@Get(':id')      // Baad mein
-```
-
----
-
-### Issue 6: NestMiddleware requires 3 arguments
-
-**Error:**
-```
-NestMiddleware interface requires 'use' method with 3 arguments
-(req: Request, res: Response, next: NextFunction)
-```
-
-**Reason:**  
-`AuthMiddleware` mein third argument `next` missing hai.
+`@UseGuards(AuthGuard)` route par nahi laga ya Guard mein `req.user = decoded` set karna bhool gaye.
 
 **Fix:**  
-```ts
-use(req: Request, res: Response, next: NextFunction) {
-  // ...
-  next()
-}
-```
+Check karo:
+1. `@UseGuards(AuthGuard)` profile route handler ke upar hai?
+2. Guard mein `req.user = decoded` set kiya hai?
+3. `src/types/express-augment.ts` mein `user` property declared hai?
 
 ---
 
@@ -2244,21 +2085,29 @@ return { user: userWithoutPassword, token }
 
 ---
 
-### ❌ Mistake 6: Route order — profile after :id
+### ❌ Mistake 6: Global middleware instead of Guard
 
 **Galat:**
 ```ts
-@Get(':id')      // Pehle
-@Get('profile')  // Baad mein  ❌
+// app.module.ts — saare routes protected
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(AuthMiddleware).forRoutes('*')
+  }
+}
 ```
 
-"Sahil" route ko hit karo → NestJS "profile" ko :id samajh lega → ParseIntPipe fail → 400 error.
+**Problem:** `GET /` (Hello World) bhi protected ho jayega. Har naye route ke liye sochna padega ki exclude karna hai ya nahi.
 
 **Sahi:**
 ```ts
-@Get('profile')  // Pehle ✅
-@Get(':id')      // Baad mein
+// users.controller.ts — sirf profile route protected
+@Get('profile')
+@UseGuards(AuthGuard)
+profile(@Req() req: Request) { ... }
 ```
+
+**Kyun?** — Guard route-specific hai. Jahan lagao wahi kaam karta hai. Naya route banaya to us par guard nahi lagega jab tak explicit `@UseGuards()` na likho.
 
 ---
 
@@ -2295,7 +2144,7 @@ profile(@Req() req: Request) {  // Express Request type
 }
 ```
 
-Plus: `src/@types/express.d.ts` mein `req.user` ka type declare karo.
+Plus: `src/types/express-augment.ts` mein `req.user` ka type declare karo.
 
 ---
 
@@ -2307,8 +2156,9 @@ Plus: `src/@types/express.d.ts` mein `req.user` ka type declare karo.
 1. NestJS mein **structure already defined hai** — tum sirf usme fit ho jao
 2. **Har cheez ki designated jagah hai** — Controller (route), Service (logic), Module (grouping), DTO (validation)
 3. **AuthService UsersService ko delegate karta hai** — DB access ka single source of truth
-4. **JWT token se user identify hota hai** — URL mein id nahi deni padti
-5. **ValidationPipe + GlobalExceptionFilter** — error handling ka solid foundation
+4. **Guard route-specific hota hai, Middleware global** — `@UseGuards()` sirf us route par lagao jahan auth chahiye
+5. **JWT token se user identify hota hai** — URL mein id nahi deni padti
+6. **ValidationPipe + GlobalExceptionFilter** — error handling ka solid foundation
 
 **Aage kya seekhna hai:**
 - Drizzle Migrations (generate + migrate for production)
