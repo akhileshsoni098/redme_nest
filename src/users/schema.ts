@@ -14,9 +14,9 @@ export const users = pgTable('users', {
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 },
-(table)=>({
-    emailIdx:uniqueIndex('users_email_unique_idx').on(table.email)
-})
+    (table) => ({
+        emailIdx: uniqueIndex('users_email_unique_idx').on(table.email)
+    })
 
 )
 

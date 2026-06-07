@@ -6,24 +6,50 @@ import {
 } from '@nestjs/common'
 import { Response } from 'express'
 
+// @Catch()
+// export class GlobalExceptionFilter implements ExceptionFilter {
+//   catch(exception: unknown, host: ArgumentsHost) {
+//     const ctx = host.switchToHttp()
+//     const response = ctx.getResponse<Response>()
+
+//     if (exception instanceof HttpException) {
+//       const status = exception.getStatus()
+//       const res = exception.getResponse()
+//       response.status(status).json(res)
+//       return
+//     }
+
+//     console.error('❌ Unexpected error:', exception)
+
+//     response.status(500).json({
+//       statusCode: 500,
+//       message: 'Internal server error',
+//     })
+//   }
+// }
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
-    const ctx = host.switchToHttp()
-    const response = ctx.getResponse<Response>()
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
 
     if (exception instanceof HttpException) {
-      const status = exception.getStatus()
-      const res = exception.getResponse()
-      response.status(status).json(res)
-      return
+      const status = exception.getStatus();
+      const res = exception.getResponse();
+
+      return response.status(status).json(
+        typeof res === 'string'
+          ? { message: res }
+          : res,
+      );
     }
 
-    console.error('❌ Unexpected error:', exception)
+    console.error('❌ Unexpected error:', exception);
 
-    response.status(500).json({
+    return response.status(500).json({
       statusCode: 500,
       message: 'Internal server error',
-    })
+    });
   }
 }
